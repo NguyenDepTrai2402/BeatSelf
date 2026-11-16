@@ -22,11 +22,11 @@ npm start
 
 Mở `http://localhost:3000`. Tài khoản admin được tạo khi khởi động lần đầu, nếu email chưa có trong cơ sở dữ liệu. Hãy thay email và mật khẩu ví dụ bằng giá trị của riêng mày. Thay biến môi trường sau đó không đổi mật khẩu của tài khoản đã tạo. Không chia sẻ dữ liệu thật hoặc mở server ra Internet.
 
-Đăng nhập admin → Quản trị → Ngân hàng để nhập mã ngân hàng/BIN, số tài khoản và chủ tài khoản; Quản trị → Tải beat để đăng một beat thật gồm ảnh, audio preview và file gốc. Người mua đăng ký tài khoản, tạo đơn, quét mã. Admin kiểm tra giao dịch thực nhận trước khi xác nhận; người mua có thể tải file sau đó.
+Đăng nhập admin → Quản trị (hoặc mở `/admin`) → Ngân hàng để nhập mã ngân hàng/BIN, số tài khoản và chủ tài khoản; Quản trị → Tải beat để đăng một beat thật gồm ảnh, audio preview và file gốc. Người mua đăng ký tài khoản, tạo đơn, quét mã. Admin kiểm tra giao dịch thực nhận trước khi xác nhận; người mua có thể tải file sau đó.
 
 Muốn cấp quyền mod: người đó tự đăng ký tài khoản → admin vào Quản trị → Phân quyền → chọn vai trò mod và bật các quyền cần thiết. Quyền xem đơn và quyền xác nhận tiền là hai quyền riêng. Admin tự quản lý tài khoản ngân hàng và quyền; mod không có các quyền này. Hoạt động sửa quyền, đăng/sửa beat, trả lời chat và xác nhận đơn được lưu vào nhật ký.
 
-Dữ liệu local được lưu trong thư mục `data/`, không đưa lên Git. Mỗi file tải lên tối đa 9 MB; hệ thống hỗ trợ JPG/PNG/WebP cho ảnh và MP3/WAV/OGG cho âm thanh. Giới hạn này và cách gửi file base64 cần được thay bằng upload trực tiếp tới object storage cho âm thanh thương mại.
+Dữ liệu local được lưu trong thư mục `data/`, không đưa lên Git. Dashboard quản trị tách riêng tại `/admin`. Ảnh JPG/PNG/WebP tối đa 10 MB, audio MP3/WAV/M4A/FLAC/OGG tối đa 100 MB mỗi file. Các file được tải độc lập và có tiến trình; dữ liệu vẫn lưu trên máy chạy server và cần chuyển sang object storage bền vững trước khi kinh doanh.
 
 ## Kiểm thử
 

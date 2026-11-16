@@ -18,3 +18,16 @@ test('authorized beat editing changes metadata and logs the action',async()=>{le
 test('permission grants and revocation are enforced by the backend',async()=>{let users=(await call('/api/admin/users',{cookie:admin})).body.users, m=users.find(x=>x.email==='mod@example.com');assert.equal((await call(`/api/admin/users/${m.id}`,{method:'PATCH',cookie:admin,data:{role:'mod',permissions:['orders.read','chat.reply']}})).status,200);assert.equal((await call('/api/orders?all=1',{cookie:mod})).status,200);assert.equal((await call(`/api/orders/${orderId}/confirm`,{method:'POST',cookie:mod,data:{}})).status,403);assert.equal((await call('/api/admin/users',{cookie:mod})).status,403);assert.equal((await call(`/api/admin/users/${m.id}`,{method:'PATCH',cookie:admin,data:{role:'customer',permissions:[]}})).status,200);let r=await call('/api/orders?all=1',{cookie:mod});assert.equal(r.body.orders.length,0)});
 test('chat isolated by customer and origin checked',async()=>{let r=await call('/api/messages',{method:'POST',cookie:customer,data:{body:'Hello'}});assert.equal(r.status,201);assert.equal((await call('/api/messages',{cookie:mod})).body.messages.length,0);assert.equal((await call('/api/messages',{method:'POST',cookie:customer,origin:'https://evil.example',data:{body:'bad'}})).status,403)});
 test('audit records staff actions without secrets',async()=>{let a=(await call('/api/admin/audit',{cookie:admin})).body.events;assert.ok(a.some(x=>x.action==='order.confirm'));assert.ok(a.some(x=>x.action==='user.permissions'));assert.ok(!JSON.stringify(a).includes('123456789'))});
+test('dashboard and separate large file uploads work with access checks',async()=>{
+ const page=await fetch(base+'/admin');assert.equal(page.status,200);assert.match(await page.text(),/BEATSELF/);
+ const wav=Buffer.alloc(11*1024*1024);wav.write('RIFF',0);wav.write('WAVE',8);
+ async function upload(kind,cookie,bytes=wav){let r=await fetch(base+'/api/uploads?kind='+kind,{method:'POST',headers:{Cookie:cookie,'content-type':'application/octet-stream'},body:bytes});return {status:r.status,body:await r.json()}}
+ assert.equal((await upload('preview',customer,Buffer.from('x'))).status,403);
+ assert.equal((await upload('preview',admin,Buffer.from('not audio'))).status,400);
+ let preview=await upload('preview',admin),master=await upload('master',admin);assert.equal(preview.status,201);assert.equal(master.status,201);
+ assert.equal((await fetch(base+'/media/'+master.body.uploadId)).status,404);
+ let d={title:'Large track',genre:'Trap',mood:'Dark',bpm:140,key_note:'Am',price:100000,preview:{uploadId:preview.body.uploadId},master:{uploadId:master.body.uploadId}};
+ let result=await call('/api/beats',{method:'POST',cookie:admin,data:d});assert.equal(result.status,201);assert.equal((await call('/api/beats',{method:'POST',cookie:admin,data:d})).status,400);
+ let track=(await call('/api/beats')).body.beats.find(x=>x.id===result.body.id);assert.equal((await fetch(base+track.preview)).status,200);
+ const fakeM4a=Buffer.from('00000018667479704d34412000000000','hex');assert.equal((await upload('preview',admin,fakeM4a)).status,201);
+});
