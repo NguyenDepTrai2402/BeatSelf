@@ -3,7 +3,7 @@ import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { get, put, presignUrl, issueSignedToken } from '@vercel/blob';
+import { get, head, put, presignUrl, issueSignedToken } from '@vercel/blob';
 import { createApp } from '../server.mjs';
 
 const snapshot='database/beatself-v1.sqlite';
@@ -45,6 +45,11 @@ export default async function handler(req,res){
   const file=path.join(dir,'state.sqlite');
   let db;
   try{
+    let writeVersion;
+    if(!['GET','HEAD'].includes(req.method)){
+      try{writeVersion=(await head(snapshot)).etag}
+      catch(e){if(e.name!=='BlobNotFoundError'&&!/not found|does not exist/i.test(e.message))throw e}
+    }
     const previous=await get(snapshot,{access:'private',useCache:false});
     if(previous)await writeFile(file,Buffer.from(await new Response(previous.stream).arrayBuffer()));
     db=new DatabaseSync(file);
@@ -57,7 +62,7 @@ export default async function handler(req,res){
       if(!previous||pending.status<400){
         db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
         const data=await readFile(file);
-        const opts=previous?{allowOverwrite:true,ifMatch:previous.blob.etag}:{allowOverwrite:false};
+        const opts=previous?{allowOverwrite:true,ifMatch:writeVersion||previous.blob.etag.replace(/^"|"$/g,'')}:{allowOverwrite:false};
         try{await put(snapshot,data,{access:'private',addRandomSuffix:false,...opts})}
         catch(e){if(!previous&&isRead&&/already exists|precondition/i.test(e.name+' '+e.message))return await handler(req,res);if(/precondition|already exists|etag mismatch/i.test(e.name+' '+e.message))return res.status(409).json({error:'Dữ liệu vừa thay đổi. Vui lòng thử lại.'});throw e}
       }
