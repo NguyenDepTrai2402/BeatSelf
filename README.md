@@ -5,8 +5,9 @@ BeatSelf là mã nguồn thử nghiệm cho một cửa hàng beat cá nhân, l�
 ## Tình trạng
 
 - **Bản local có backend thử nghiệm:** tài khoản, session, đăng và sửa beat/ảnh/file, phân quyền admin/mod/customer, nhật ký quản trị, chat, đơn hàng, QR chuyển khoản và xác nhận thủ công, tải file sau khi xác nhận.
-- **Bản Vercel là bản xem thử chỉ đọc:** nghe sáu âm thanh tổng hợp, tìm kiếm, lọc và yêu thích trên trình duyệt. Bản này không có backend thật; tài khoản, thanh toán và quản trị không hoạt động.
-- **Chưa sẵn sàng thu tiền thật.** SQLite và file lưu trên máy chạy server. Không dùng filesystem tạm của Vercel để lưu tài khoản, đơn hoặc file; cần chuyển sang PostgreSQL bền vững và object storage riêng tư. Cần bổ sung bảo vệ đăng nhập, khôi phục mật khẩu, email, quản lý phiên, sao lưu, giám sát, quy trình vận hành và đánh giá bảo mật trước khi mở bán.
+- Vercel chạy storefront và dashboard tại `/admin`. Vercel Functions dùng cùng logic phân quyền với server local. Mỗi request đọc snapshot SQLite mới nhất từ private Blob. Trước khi trả thành công cho thao tác ghi, server lưu snapshot với điều kiện ETag. Nếu có xung đột, client nhận HTTP 409 để thử lại. Kiến trúc này dành cho cửa hàng thử nghiệm ít người dùng.
+- Trên Vercel, đặt `BLOB_READ_WRITE_TOKEN`, `ADMIN_EMAIL` và `ADMIN_PASSWORD_HASH` (salt hex + dấu hai chấm + scrypt 64 byte ở dạng hex). File tải thẳng vào private Blob qua URL có giới hạn dung lượng và thời hạn. Server kiểm tra loại file trước khi cho gắn vào beat.
+- Trước khi thu tiền thật cần bổ sung khôi phục mật khẩu, bảo vệ đăng nhập, sao lưu và kiểm tra quy trình đối soát. VietQR tạo mã chuyển khoản theo đơn, admin xác nhận tiền thủ công.
 - Các điều khoản giấy phép, giá mẫu và lựa chọn Basic/Premium chỉ để minh họa. Hiện cả hai loại đều giao cùng một file gốc; chưa có hợp đồng, kiểm soát phạm vi sử dụng hay xử lý bản quyền. Exclusive đã tắt. Cần thiết kế lại file và hợp đồng theo từng giấy phép trước khi bán.
 - Sáu beat demo là âm thanh do chương trình tổng hợp, không phải sản phẩm để mua. Không dùng cho mục đích thương mại thay beat thật.
 

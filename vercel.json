@@ -1,0 +1,1 @@
+{"functions":{"api/index.js":{"maxDuration":60}},"rewrites":[{"source":"/admin","destination":"/admin.html"},{"source":"/media/:id","destination":"/api/index"},{"source":"/api/:path*","destination":"/api/index"}]}

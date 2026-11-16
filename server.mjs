@@ -5,8 +5,8 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync, openS
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root=path.dirname(fileURLToPath(import.meta.url));
-const data=process.env.DATA_DIR || path.join(root,'data'); mkdirSync(data,{recursive:true}); mkdirSync(path.join(data,'media'),{recursive:true});
-const db=new DatabaseSync(path.join(data,'beatself.sqlite')); db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+export function createApp(db,data,cloud=null){
+db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,email TEXT UNIQUE NOT NULL,name TEXT NOT NULL,password TEXT NOT NULL,role TEXT NOT NULL DEFAULT 'customer',created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS sessions(token TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),expires INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS beats(id INTEGER PRIMARY KEY,title TEXT NOT NULL,genre TEXT NOT NULL,mood TEXT NOT NULL,bpm INTEGER NOT NULL,key_note TEXT NOT NULL,price INTEGER NOT NULL,art TEXT NOT NULL DEFAULT '',preview TEXT NOT NULL DEFAULT '',master TEXT NOT NULL DEFAULT '',published INTEGER NOT NULL DEFAULT 1,demo INTEGER NOT NULL DEFAULT 0,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -21,9 +21,9 @@ const q=(s,...a)=>db.prepare(s).all(...a), one=(s,...a)=>db.prepare(s).get(...a)
 const saltHash=p=>{const s=randomBytes(16).toString('hex');return s+':'+scryptSync(p,s,64).toString('hex')};
 const verify=(p,h)=>{try{let [s,k]=h.split(':');return timingSafeEqual(Buffer.from(k,'hex'),scryptSync(p,s,64))}catch{return false}};
 const hash=t=>createHash('sha256').update(t).digest('hex');
-if(process.env.ADMIN_EMAIL&&process.env.ADMIN_PASSWORD&&process.env.ADMIN_PASSWORD.length>=12&&!one('SELECT id FROM users WHERE email=?',process.env.ADMIN_EMAIL.toLowerCase())) run('INSERT INTO users(email,name,password,role) VALUES(?,?,?,?)',process.env.ADMIN_EMAIL.toLowerCase(),'Admin',saltHash(process.env.ADMIN_PASSWORD),'admin');
+if(process.env.ADMIN_EMAIL&&(process.env.ADMIN_PASSWORD_HASH||process.env.ADMIN_PASSWORD?.length>=12)&&!one('SELECT id FROM users WHERE email=?',process.env.ADMIN_EMAIL.toLowerCase())) run('INSERT INTO users(email,name,password,role) VALUES(?,?,?,?)',process.env.ADMIN_EMAIL.toLowerCase(),'Admin',process.env.ADMIN_PASSWORD_HASH||saltHash(process.env.ADMIN_PASSWORD),'admin');
 if(!one('SELECT id FROM beats LIMIT 1')) {const insert=db.prepare('INSERT INTO beats(title,genre,mood,bpm,key_note,price,art,demo) VALUES(?,?,?,?,?,?,?,1)');for(const b of [['SAIGON AFTER DARK','Trap','Dark',140,'F#m',399000,'violet'],['NO SIGNAL','R&B','Chill',92,'Am',349000,'blue'],['ĐÊM TRÔI','Lo-fi','Dreamy',85,'Dm',299000,'orange'],['HIGH TIDE','Drill','Hard',145,'Gm',449000,'green'],['RED EYE','Hip-hop','Dark',128,'Cm',399000,'red'],['SLOW BURN','R&B','Soulful',96,'Em',349000,'pink']])insert.run(...b)}
-for(const b of q('SELECT id FROM beats WHERE demo=1')){const id=createHash('sha1').update('beatself-demo-'+b.id).digest('hex');const source=path.join(root,'public','demo',`${b.id}.wav`);if(existsSync(source)){copyFileSync(source,path.join(data,'media',id));writeFileSync(path.join(data,'media',id+'.type'),'audio/wav');run("UPDATE beats SET preview=? WHERE id=? AND preview=''",id,b.id)}}
+for(const b of q('SELECT id FROM beats WHERE demo=1')){const id=createHash('sha1').update('beatself-demo-'+b.id).digest('hex');const source=path.join(root,'public','demo',`${b.id}.wav`);if(cloud){run("UPDATE beats SET preview=? WHERE id=? AND preview=''",id,b.id)}else if(existsSync(source)){copyFileSync(source,path.join(data,'media',id));writeFileSync(path.join(data,'media',id+'.type'),'audio/wav');run("UPDATE beats SET preview=? WHERE id=? AND preview=''",id,b.id)}}
 const defaultPerms=['beats.write','orders.read','chat.reply'];
 const can=(u,p)=>u?.role==='admin'||(u?.role==='mod'&&(one('SELECT 1 ok FROM permissions WHERE user_id=? AND permission=?',u.id,p)?.ok===1));
 const publicUser=u=>({id:u.id,name:u.name,email:u.email,role:u.role,permissions:u.role==='admin'?['*']:q('SELECT permission FROM permissions WHERE user_id=?',u.id).map(x=>x.permission)});
@@ -31,7 +31,7 @@ function actor(req){const tok=(req.headers.cookie||'').split(';').map(x=>x.trim(
 function audit(u,action,details){run('INSERT INTO audit(actor_id,action,details) VALUES(?,?,?)',u.id,action,JSON.stringify(details))}
 const result=(res,status,data,headers={})=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff',...headers});res.end(JSON.stringify(data))};
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status})};
-async function body(req){let chunks=[],size=0;for await(const c of req){size+=c.length;if(size>12*1024*1024)fail(413,'File hoặc dữ liệu quá lớn (tối đa 9 MB/file).');chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString()||'{}')}catch{fail(400,'Dữ liệu không hợp lệ.')}}
+async function body(req){if(req.body!==undefined){if(typeof req.body==='object'&&!Buffer.isBuffer(req.body))return req.body;try{return JSON.parse(String(req.body))}catch{fail(400,'JSON không hợp lệ.')}}let chunks=[],size=0;for await(const c of req){size+=c.length;if(size>12*1024*1024)fail(413,'File hoặc dữ liệu quá lớn (tối đa 9 MB/file).');chunks.push(c)}try{return JSON.parse(Buffer.concat(chunks).toString()||'{}')}catch{fail(400,'Dữ liệu không hợp lệ.')}}
 const requireUser=u=>{if(!u)fail(401,'Vui lòng đăng nhập.');return u};
 const requirePerm=(u,p)=>{requireUser(u);if(!can(u,p))fail(403,'Bạn không có quyền thực hiện thao tác này.')};
 function storeFile(file,kind){if(!file)return '';const allowed=kind==='art'?['image/png','image/jpeg','image/webp']:['audio/mpeg','audio/wav','audio/x-wav','audio/ogg'];if(!allowed.includes(file.type))fail(400,'Định dạng file không hỗ trợ.');if(typeof file.data!=='string'||file.data.length>12*1024*1024)fail(400,'File quá lớn.');const buf=Buffer.from(file.data,'base64');if(!buf.length||buf.length>9*1024*1024)fail(400,'File quá lớn hoặc rỗng.');const sig=buf.subarray(0,12);const valid=file.type==='image/png'?sig.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')):file.type==='image/jpeg'?sig[0]===255&&sig[1]===216:file.type==='image/webp'?sig.toString('ascii',0,4)==='RIFF'&&sig.toString('ascii',8,12)==='WEBP':file.type==='audio/ogg'?sig.toString('ascii',0,4)==='OggS':file.type.includes('wav')?sig.toString('ascii',0,4)==='RIFF'&&sig.toString('ascii',8,12)==='WAVE':sig.toString('ascii',0,3)==='ID3'||(sig[0]===255&&(sig[1]&224)===224);if(!valid)fail(400,'Nội dung file không khớp định dạng.');const id=randomBytes(20).toString('hex');writeFileSync(path.join(data,'media',id),buf);writeFileSync(path.join(data,'media',id+'.type'),file.type);return id}
@@ -62,16 +62,38 @@ async function receiveUpload(req,u,kind){
 }
 function resolveUpload(file,kind,u){if(!file)return '';if(typeof file.uploadId==='string'){
  const item=one('SELECT id FROM uploads WHERE id=? AND user_id=? AND kind=? AND claimed=0',file.uploadId,u.id,kind);if(!item)fail(400,'File tải lên không hợp lệ, đã được sử dụng hoặc không thuộc tài khoản này.');return item.id;
- }return storeFile(file,kind==='art'?'art':'audio');}
+ }if(cloud)fail(400,'Cần tải file qua dashboard.');return storeFile(file,kind==='art'?'art':'audio');}
 function claimUploads(b,u){for(const k of ['art','preview','master'])if(b[k]?.uploadId)run('UPDATE uploads SET claimed=1 WHERE id=? AND user_id=? AND kind=?',b[k].uploadId,u.id,k)}
 const sget=k=>one('SELECT value FROM settings WHERE key=?',k)?.value||'';
 const licenses={basic:{label:'Basic MP3',factor:1},premium:{label:'Premium WAV',factor:2},exclusive:{label:'Exclusive',factor:6}};
 async function api(req,res,url){let u=actor(req);const method=req.method,p=url.pathname;
 if(!['GET','HEAD'].includes(method)&&req.headers.origin&&req.headers.origin!==`http://${req.headers.host}`&&req.headers.origin!==`https://${req.headers.host}`)fail(403,'Origin không hợp lệ.');
-if(p==='/api/uploads'&&method==='POST'){requirePerm(u,'beats.write');const uploaded=await receiveUpload(req,u,url.searchParams.get('kind'));return result(res,201,uploaded)}
+if(p==='/api/upload-url'&&method==='POST'){
+ requirePerm(u,'beats.write');
+ if(!cloud)return result(res,200,{local:true});
+ const {kind,size}=await body(req);
+ const limit=kind==='art'?10:100;
+ if(!['art','preview','master'].includes(kind)||!Number.isSafeInteger(size)||size<1||size>limit*1024*1024)fail(400,'Dung lượng hoặc loại file không hợp lệ.');
+ const id=randomBytes(20).toString('hex');
+ const url=await cloud.uploadUrl(id,size);
+ run('INSERT INTO uploads(id,user_id,kind,claimed,created_at) VALUES(?,?,?,-1,?)',id,u.id,kind,Date.now());
+ return result(res,201,{id,url});
+}
+if(p==='/api/upload-finish'&&method==='POST'&&cloud){
+ requirePerm(u,'beats.write');
+ const {id}=await body(req);
+ const item=one('SELECT kind FROM uploads WHERE id=? AND user_id=? AND claimed=-1',id,u.id);
+ if(!item)fail(400,'Phiên tải file không hợp lệ.');
+ const header=await cloud.header(id);
+ const type=sniffFile(header,item.kind);
+ run('INSERT INTO settings(key,value) VALUES(?,?)','mime:'+id,type);
+ run('UPDATE uploads SET claimed=0 WHERE id=?',id);
+ return result(res,200,{uploadId:id});
+}
+if(p==='/api/uploads'&&method==='POST'){requirePerm(u,'beats.write');if(cloud)fail(400,'Dùng luồng tải file của dashboard.');const uploaded=await receiveUpload(req,u,url.searchParams.get('kind'));return result(res,201,uploaded)}
 if(p==='/api/session'&&method==='GET')return result(res,200,{user:u?publicUser(u):null});
 if(p==='/api/register'&&method==='POST'){let b=await body(req),email=String(b.email||'').toLowerCase().trim(),name=String(b.name||'').trim(),password=String(b.password||'');if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254||name.length<2||name.length>80||password.length<10||password.length>200)fail(400,'Kiểm tra tên, email và mật khẩu tối thiểu 10 ký tự.');try{run('INSERT INTO users(email,name,password) VALUES(?,?,?)',email,name,saltHash(password))}catch{fail(409,'Email đã được đăng ký.')}return result(res,201,{message:'Đăng ký thành công, hãy đăng nhập.'})}
-if(p==='/api/login'&&method==='POST'){let b=await body(req);let person=one('SELECT * FROM users WHERE email=?',String(b.email||'').trim().toLowerCase());if(!person||!verify(String(b.password||''),person.password))fail(401,'Email hoặc mật khẩu không đúng.');let token=randomBytes(32).toString('hex');run('INSERT INTO sessions(token,user_id,expires) VALUES(?,?,?)',hash(token),person.id,Date.now()+86400e3*7);return result(res,200,{user:publicUser(person)},{'Set-Cookie':`session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${process.env.SECURE_COOKIES==='1'?'; Secure':''}`})}
+if(p==='/api/login'&&method==='POST'){let b=await body(req);let person=one('SELECT * FROM users WHERE email=?',String(b.email||'').trim().toLowerCase());if(!person||!verify(String(b.password||''),person.password))fail(401,'Email hoặc mật khẩu không đúng.');let token=randomBytes(32).toString('hex');run('INSERT INTO sessions(token,user_id,expires) VALUES(?,?,?)',hash(token),person.id,Date.now()+86400e3*7);return result(res,200,{user:publicUser(person)},{'Set-Cookie':`session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${(cloud||process.env.SECURE_COOKIES==='1')?'; Secure':''}`})}
 if(p==='/api/logout'&&method==='POST'){let token=(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('session='))?.slice(8);if(token)run('DELETE FROM sessions WHERE token=?',hash(token));return result(res,200,{ok:true},{'Set-Cookie':'session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'})}
 if(p==='/api/beats'&&method==='GET')return result(res,200,{beats:q('SELECT id,title,genre,mood,bpm,key_note,price,art,preview,demo,created_at FROM beats WHERE published=1 ORDER BY id DESC').reverse().map(b=>({...b,art:b.art&&b.art.length===40?`/media/${b.art}`:b.art,preview:b.preview?`/media/${b.preview}`:''}))});
 if(p==='/api/beats'&&method==='POST'){requirePerm(u,'beats.write');let b=await body(req),title=String(b.title||'').trim(),genre=String(b.genre||'').trim(),mood=String(b.mood||'').trim(),key=String(b.key_note||'').trim(),bpm=Number(b.bpm),price=Number(b.price);if(!title||title.length>100||!genre||genre.length>30||!mood||mood.length>30||!key||key.length>12||!Number.isInteger(bpm)||bpm<40||bpm>250||!Number.isInteger(price)||price<1000||price>100000000)fail(400,'Thông tin beat không hợp lệ.');let art=resolveUpload(b.art,'art',u),preview=resolveUpload(b.preview,'preview',u),master=resolveUpload(b.master,'master',u);let r;db.exec('BEGIN');try{r=run('INSERT INTO beats(title,genre,mood,bpm,key_note,price,art,preview,master) VALUES(?,?,?,?,?,?,?,?,?)',title,genre,mood,bpm,key,price,art,preview,master);claimUploads(b,u);audit(u,'beat.create',{id:Number(r.lastInsertRowid),title});db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}return result(res,201,{id:Number(r.lastInsertRowid)})}
@@ -89,6 +111,12 @@ if(p==='/api/admin/audit'&&method==='GET'){requirePerm(u,'audit.read');return re
 if(p==='/api/admin/settings'&&method==='GET'){requirePerm(u,'settings.manage');return result(res,200,{bank:sget('bank'),account:sget('account'),holder:sget('holder')})}
 if(p==='/api/admin/settings'&&method==='POST'){requirePerm(u,'settings.manage');let b=await body(req);if(!/^[A-Za-z0-9]{2,20}$/.test(b.bank||'')||!/^\d{5,25}$/.test(b.account||'')||!String(b.holder||'').trim()||String(b.holder).length>100)fail(400,'Thông tin ngân hàng không hợp lệ.');for(const k of ['bank','account','holder'])run('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',k,String(b[k]));audit(u,'settings.bank.update',{bank:b.bank,accountLast4:String(b.account).slice(-4)});return result(res,200,{ok:true})}
 fail(404,'Không tìm thấy API.');}
-function serveMedia(res,id,download=false){if(!/^[a-f0-9]{40}$/.test(id))fail(404,'Không tìm thấy file.');const filename=path.join(data,'media',id);if(!existsSync(filename))fail(404,'Không tìm thấy file.');res.writeHead(200,{'Content-Type':readFileSync(filename+'.type','utf8'),'X-Content-Type-Options':'nosniff',...(download?{'Content-Disposition':'attachment; filename="beat-audio"'}:{})});createReadStream(filename).pipe(res)}
-const server=http.createServer(async(req,res)=>{try{let url=new URL(req.url,'http://localhost');if(url.pathname.startsWith('/api/'))return await api(req,res,url);let m=url.pathname.match(/^\/media\/([a-f0-9]{40})$/);if(m){if(!one('SELECT id FROM beats WHERE published=1 AND (art=? OR preview=?)',m[1],m[1]))fail(404,'Không tìm thấy file.');return serveMedia(res,m[1])}let files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/admin':'admin.html','/admin/':'admin.html','/admin.js':'admin.js','/admin.css':'admin.css'},f=files[url.pathname];if(!f)fail(404,'Không tìm thấy trang.');res.writeHead(200,{'Content-Type':f.endsWith('.js')?'text/javascript; charset=utf-8':f.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; img-src 'self' data: https://img.vietqr.io; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"});res.end(readFileSync(path.join(root,'public',f)))}catch(e){console.error(e.status?e.message:e);if(!res.headersSent)result(res,e.status||500,{error:e.status?e.message:'Lỗi máy chủ.'});else res.end()}});
-server.listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log(`BeatSelf running on http://localhost:${process.env.PORT||3000}`));
+function serveMedia(res,id,download=false){if(cloud)return cloud.media(res,id,sget('mime:'+id),download);if(!/^[a-f0-9]{40}$/.test(id))fail(404,'Không tìm thấy file.');const filename=path.join(data,'media',id);if(!existsSync(filename))fail(404,'Không tìm thấy file.');res.writeHead(200,{'Content-Type':readFileSync(filename+'.type','utf8'),'X-Content-Type-Options':'nosniff',...(download?{'Content-Disposition':'attachment; filename="beat-audio"'}:{})});createReadStream(filename).pipe(res)}
+return async(req,res)=>{try{let url=new URL(req.url,'http://localhost');if(url.pathname.startsWith('/api/'))return await api(req,res,url);let m=url.pathname.match(/^\/media\/([a-f0-9]{40})$/);if(m){if(!one('SELECT id FROM beats WHERE published=1 AND (art=? OR preview=?)',m[1],m[1]))fail(404,'Không tìm thấy file.');return await serveMedia(res,m[1])}let files={'/':'index.html','/app.js':'app.js','/style.css':'style.css','/admin':'admin.html','/admin/':'admin.html','/admin.js':'admin.js','/admin.css':'admin.css'},f=files[url.pathname];if(!f)fail(404,'Không tìm thấy trang.');res.writeHead(200,{'Content-Type':f.endsWith('.js')?'text/javascript; charset=utf-8':f.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; img-src 'self' data: https://img.vietqr.io; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"});res.end(readFileSync(path.join(root,'public',f)))}catch(e){console.error(e.status?e.message:e);if(!res.headersSent)result(res,e.status||500,{error:e.status?e.message:'Lỗi máy chủ.'});else res.end()}};
+}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+ const data=process.env.DATA_DIR||path.join(root,'data');
+ mkdirSync(path.join(data,'media'),{recursive:true});
+ const db=new DatabaseSync(path.join(data,'beatself.sqlite'));
+ http.createServer(createApp(db,data)).listen(Number(process.env.PORT||3000),'0.0.0.0',()=>console.log('BeatSelf running'));
+}
